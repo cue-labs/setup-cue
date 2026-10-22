@@ -11,7 +11,22 @@ workflows: [
 		filename: "build-and-test.yml"
 		workflow: buildAndTest
 	},
+	{
+		filename: "smoke-test.yml"
+		workflow: smokeTest
+	},
 ]
+
+_checkout: {
+	name: "Checkout"
+	uses: "actions/checkout@v7"
+}
+
+_setupNode: {
+	name: "Use node.js 24.x"
+	uses: "actions/setup-node@v7"
+	with: "node-version": 24
+}
 
 buildAndTest: githubactions.#Workflow & {
 	name: "build and test"
@@ -24,51 +39,108 @@ buildAndTest: githubactions.#Workflow & {
 			"main",
 		]
 	}
+	permissions: contents: "read"
 
-	jobs: build: {
-		"runs-on": "ubuntu-latest"
+	jobs: {
+		test: {
+			strategy: {
+				"fail-fast": false
+				matrix: os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+			}
+			"runs-on": "${{ matrix.os }}"
+			steps: [
+				_checkout,
+				_setupNode,
+				{
+					name: "Run tests"
+					run: """
+						npm ci
+						npm test
+
+						"""
+				},
+			]
+		}
+		generate: {
+			"runs-on": "ubuntu-latest"
+			steps: [
+				_checkout,
+				_setupNode,
+				{
+					// The generators below only need some cue. Until the release host
+					// serves a release this action can install, take it from the
+					// open-source action.
+					name: "Use CUE"
+					uses: "cue-lang/setup-cue@v2"
+					with: version: "v0.17.1"
+				},
+				{
+					name: "Build"
+					run: """
+						npm ci
+						npm run dist
+
+						"""
+				},
+				{
+					name: "Re-gen GitHub Action schema"
+					run:  "cue cmd genaction"
+				},
+				{
+					name: "Re-gen GitHub Actions workflows"
+					run:  "cue cmd genworkflows"
+				},
+				{
+					name: "Check commit clean"
+					run:  "test -z \"$(git status --porcelain)\" || (git status; git diff; false)"
+				},
+			]
+		}
+	}
+}
+
+// smokeTest installs from the real release host. Run it before every release.
+smokeTest: githubactions.#Workflow & {
+	name: "smoke test"
+	on: workflow_dispatch: inputs: version: {
+		description: "The CUE version to install: an exact version, or latest"
+		required:    true
+		default:     "latest"
+	}
+	permissions: contents: "read"
+
+	jobs: smoke: {
+		strategy: {
+			"fail-fast": false
+			matrix: os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+		}
+		"runs-on": "${{ matrix.os }}"
 		steps: [
-			{
-				name: "Checkout"
-				uses: "actions/checkout@v7"
-			},
-			{
-				name: "Use node.js 24.x"
-				uses: "actions/setup-node@v7"
-				with: "node-version": 24
-			},
+			_checkout,
 			{
 				name: "Use CUE"
+				id:   "install"
 				uses: "./"
-				with: version: "v0.17.1"
+				with: version: "${{ inputs.version }}"
 			},
 			{
-				name: "Check CUE version"
-				run:  "cue version"
-			},
-			{
-				name: "Run tests"
+				name:  "Check cue on PATH is the one installed"
+				shell: "bash"
+				env: {
+					CUE_PATH: "${{ steps.install.outputs.cue-path }}"
+					WANT:     "${{ inputs.version }}"
+				}
 				run: """
-					npm ci
-					npm test
+					set -eu
+					onpath=$(cue version)
+					output=$("$CUE_PATH" version)
+					echo "$onpath"
+					test "$onpath" = "$output"
+					if [ "$WANT" != latest ]; then
+						echo "$onpath" | head -n 1 | grep -Fx "cue version $WANT"
+					fi
 
 					"""
-			},
-			{
-				name: "Build"
-				run:  "npm run dist"
-			},
-			{
-				name: "Re-gen GitHub Action schema"
-				run:  "cue cmd genaction"
-			},
-			{
-				name: "Re-gen GitHub Actions workflows"
-				run:  "cue cmd genworkflows"
-			},
-			{
-				name: "Check commit clean"
-				run:  "test -z \"$(git status --porcelain)\" || (git status; git diff; false)"
 			},
 		]
 	}
