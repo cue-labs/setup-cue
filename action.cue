@@ -3,10 +3,10 @@ package action
 import "cue.dev/x/githubactions"
 
 action: githubactions.#Action & {
-	name:        "Setup CUE environment"
-	description: "Setup a CUE environment and add it to the PATH."
+	name:        "Setup CUE by CUE Labs"
+	description: "Install CUE by CUE Labs, the official distribution of CUE, and add it to the PATH."
 	inputs: version: {
-		description: #"The CUE version to setup. Must be a valid version string like "v0.6.0", or "latest""#
+		description: #"The CUE version to setup. Must be a valid version string like "v0.18.0", or "latest""#
 		required:    true
 		default:     "latest"
 	}

@@ -1,7 +1,7 @@
 {
   "name": "setup-cue",
-  "version": "2.0.0",
-  "description": "Install CUE on your runner using Github Actions",
+  "version": "0.0.0",
+  "description": "Install CUE by CUE Labs on GitHub Actions runners",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc --outDir ./lib --rootDir ./src",
@@ -11,10 +11,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cue-lang/setup-cue.git"
+    "url": "git+https://github.com/cue-labs/setup-cue.git"
   },
   "keywords": [
-    "eks"
+    "cue",
+    "github-actions"
   ],
   "author": "cbrgm",
   "license": "Apache 2.0",
