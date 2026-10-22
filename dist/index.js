@@ -34022,103 +34022,295 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __asyncValues = (this && this.__asyncValues) || function (o) {
+    if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+    var m = o[Symbol.asyncIterator], i;
+    return m ? m.call(o) : (o = typeof __values === "function" ? __values(o) : o[Symbol.iterator](), i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function () { return this; }, i);
+    function verb(n) { i[n] = o[n] && function (v) { return new Promise(function (resolve, reject) { v = o[n](v), settle(resolve, reject, v.done, v.value); }); }; }
+    function settle(resolve, reject, d, v) { Promise.resolve(v).then(function(v) { resolve({ value: v, done: d }); }, reject); }
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getExecutableExtension = getExecutableExtension;
-exports.getCuectlOSArchitecture = getCuectlOSArchitecture;
-exports.getLatestCuectlVersion = getLatestCuectlVersion;
-exports.getCuectlDownloadURL = getCuectlDownloadURL;
-exports.downloadCuectl = downloadCuectl;
+exports.releaseHost = void 0;
+exports.getGoOS = getGoOS;
+exports.getGoArch = getGoArch;
+exports.archiveName = archiveName;
+exports.binaryName = binaryName;
+exports.isLatest = isLatest;
+exports.isExactVersion = isExactVersion;
+exports.compareVersions = compareVersions;
+exports.suggestVersion = suggestVersion;
+exports.parseLatest = parseLatest;
+exports.parseIndex = parseIndex;
+exports.parseChecksums = parseChecksums;
+exports.publishedPlatforms = publishedPlatforms;
+exports.install = install;
 exports.run = run;
+const crypto = __nccwpck_require__(6982);
+const fs = __nccwpck_require__(9896);
 const os = __nccwpck_require__(857);
 const path = __nccwpck_require__(6928);
-const util = __nccwpck_require__(9023);
-const fs = __nccwpck_require__(9896);
 const toolCache = __nccwpck_require__(3472);
 const core = __nccwpck_require__(7484);
-const cuectlToolName = 'cue';
-const cuectlLatestReleaseUrl = 'https://proxy.golang.org/cuelang.org/go/@latest';
-function getExecutableExtension() {
-    if (os.type().match(/^Win/)) {
-        return '.exe';
-    }
-    return '';
+// releaseHost is where releases of CUE by CUE Labs are downloaded from.
+// Every URL the action fetches is this host joined with one of these paths:
+//
+//	latest.txt                          the newest stable version, on one line
+//	index.json                          {"versions": [{"version": "v0.18.0", ...}, ...]}
+//	<version>/cue_<version>_checksums.txt  sha256sum output for the version's files
+//	<version>/cue_<version>_<os>_<arch>.tar.gz  (.zip for windows)
+//
+// It is the only place the host is named.
+exports.releaseHost = 'https://storage.googleapis.com/cue-releases/';
+// toolCacheName is the name under which installations are recorded in the
+// runner's tool cache. It differs from the name cue-lang/setup-cue uses, so
+// that neither action ever picks up a binary the other installed.
+const toolCacheName = 'cue-labs-cue';
+function getGoOS(platform = os.platform()) {
+    return platform === 'win32' ? 'windows' : platform;
 }
-function getCuectlOSArchitecture() {
-    let arch = os.arch();
-    if (arch === 'x64') {
-        return 'amd64';
+function getGoArch(arch = os.arch()) {
+    switch (arch) {
+        case 'x64':
+            return 'amd64';
+        case 'ia32':
+            return '386';
+        default:
+            return arch;
     }
-    return arch;
 }
-function getLatestCuectlVersion() {
+function archiveName(version, goos, goarch) {
+    const ext = goos === 'windows' ? 'zip' : 'tar.gz';
+    return `cue_${version}_${goos}_${goarch}.${ext}`;
+}
+function binaryName(goos) {
+    return goos === 'windows' ? 'cue.exe' : 'cue';
+}
+function isLatest(input) {
+    const v = input.trim().toLowerCase();
+    return v === '' || v === 'latest';
+}
+// exactVersion matches a version as releases name it: a leading "v" and a
+// semantic version without build metadata.
+const exactVersion = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?$/;
+function isExactVersion(v) {
+    return exactVersion.test(v);
+}
+// compareVersions orders exact versions by semantic version precedence.
+function compareVersions(a, b) {
+    const pa = a.match(exactVersion);
+    const pb = b.match(exactVersion);
+    for (let i = 1; i <= 3; i++) {
+        const d = Number(pa[i]) - Number(pb[i]);
+        if (d !== 0) {
+            return d;
+        }
+    }
+    if (pa[4] === undefined || pb[4] === undefined) {
+        // A release sorts after its pre-releases.
+        return (pa[4] === undefined ? 1 : 0) - (pb[4] === undefined ? 1 : 0);
+    }
+    const xa = pa[4].split('.');
+    const xb = pb[4].split('.');
+    for (let i = 0; i < Math.min(xa.length, xb.length); i++) {
+        const na = /^\d+$/.test(xa[i]);
+        const nb = /^\d+$/.test(xb[i]);
+        if (na && nb) {
+            const d = Number(xa[i]) - Number(xb[i]);
+            if (d !== 0) {
+                return d;
+            }
+        }
+        else if (na !== nb) {
+            return na ? -1 : 1;
+        }
+        else if (xa[i] !== xb[i]) {
+            return xa[i] < xb[i] ? -1 : 1;
+        }
+    }
+    return xa.length - xb.length;
+}
+// suggestVersion returns the listed version that input most likely meant,
+// when it differs only by a missing "v" or by letter case.
+function suggestVersion(input, listed) {
+    const want = (input.startsWith('v') || input.startsWith('V') ? input : 'v' + input).toLowerCase();
+    return listed.find(v => v.toLowerCase() === want);
+}
+function parseLatest(text, url) {
+    const v = text.split('\n')[0].trim();
+    if (v === '') {
+        throw new Error(`the latest version file ${url} is empty`);
+    }
+    return v;
+}
+function parseIndex(text, url) {
+    let index;
+    try {
+        index = JSON.parse(text);
+    }
+    catch (e) {
+        throw new Error(`the release index ${url} is not valid JSON: ${e.message}`);
+    }
+    if (!Array.isArray(index === null || index === void 0 ? void 0 : index.versions) || !index.versions.every((v) => typeof (v === null || v === void 0 ? void 0 : v.version) === 'string')) {
+        throw new Error(`the release index ${url} has no list of versions`);
+    }
+    return index.versions.map((v) => v.version);
+}
+// parseChecksums reads sha256sum output into a map from file name to digest.
+function parseChecksums(text, url) {
+    const sums = new Map();
+    for (const line of text.split('\n').map(l => l.replace(/\r$/, ''))) {
+        if (line.trim() === '') {
+            continue;
+        }
+        const m = line.match(/^([0-9a-fA-F]{64}) [ *](.+)$/);
+        if (!m) {
+            throw new Error(`the checksum file ${url} has a malformed line: ${line}`);
+        }
+        sums.set(m[2], m[1].toLowerCase());
+    }
+    return sums;
+}
+// publishedPlatforms lists the os/arch pairs a checksum file has archives for.
+function publishedPlatforms(sums, version) {
+    const prefix = `cue_${version}_`;
+    const platforms = [];
+    for (const name of sums.keys()) {
+        if (!name.startsWith(prefix)) {
+            continue;
+        }
+        const m = name.slice(prefix.length).match(/^([^_]+)_([^_.]+)\.(?:tar\.gz|zip)$/);
+        if (m) {
+            platforms.push(`${m[1]}/${m[2]}`);
+        }
+    }
+    return platforms.sort();
+}
+function download(url, what, dest) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
-            const downloadPath = yield toolCache.downloadTool(cuectlLatestReleaseUrl);
-            const response = JSON.parse(fs.readFileSync(downloadPath, 'utf8').toString().trim());
-            return response.Version;
+            return yield toolCache.downloadTool(url, dest);
         }
-        catch (error) {
-            throw new Error(util.format("Cannot get the latest cue releases infos from %s. Error %s.", cuectlLatestReleaseUrl, error));
+        catch (e) {
+            throw new Error(`cannot download the ${what} ${url}: ${e.message}`);
         }
     });
 }
-function getCuectlDownloadURL(version, arch) {
-    switch (os.type()) {
-        case 'Linux':
-            return util.format('https://github.com/cue-lang/cue/releases/download/%s/cue_%s_linux_%s.tar.gz', version, version, arch);
-        case 'Darwin':
-            return util.format('https://github.com/cue-lang/cue/releases/download/%s/cue_%s_darwin_%s.tar.gz', version, version, arch);
-        case 'Windows_NT':
-        default:
-            return util.format('https://github.com/cue-lang/cue/releases/download/%s/cue_%s_windows_%s.zip', version, version, arch);
-    }
-}
-function downloadCuectl(version) {
+function fetchText(url, what) {
     return __awaiter(this, void 0, void 0, function* () {
-        if (!version) {
-            version = yield getLatestCuectlVersion();
+        const file = yield download(url, what);
+        try {
+            return fs.readFileSync(file, 'utf8');
         }
-        let cachedToolpath = toolCache.find(cuectlToolName, version);
-        let cuectlDownloadPath = '';
-        let extractedCuectlPath = '';
-        let arch = getCuectlOSArchitecture();
-        if (!cachedToolpath) {
+        finally {
+            fs.rmSync(file, { force: true });
+        }
+    });
+}
+function sha256File(file) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, e_1, _b, _c;
+        const hash = crypto.createHash('sha256');
+        try {
+            for (var _d = true, _e = __asyncValues(fs.createReadStream(file)), _f; _f = yield _e.next(), _a = _f.done, !_a; _d = true) {
+                _c = _f.value;
+                _d = false;
+                const chunk = _c;
+                hash.update(chunk);
+            }
+        }
+        catch (e_1_1) { e_1 = { error: e_1_1 }; }
+        finally {
             try {
-                cuectlDownloadPath = yield toolCache.downloadTool(getCuectlDownloadURL(version, arch));
-                if (os.type() === 'Windows_NT') {
-                    extractedCuectlPath = yield toolCache.extractZip(cuectlDownloadPath);
-                }
-                else {
-                    extractedCuectlPath = yield toolCache.extractTar(cuectlDownloadPath);
-                }
+                if (!_d && !_a && (_b = _e.return)) yield _b.call(_e);
             }
-            catch (exception) {
-                if (exception instanceof toolCache.HTTPError && exception.httpStatusCode === 404) {
-                    throw new Error(util.format("Cuectl '%s' for '%s' arch not found.", version, arch));
-                }
-                else {
-                    throw new Error('DownloadCuectlFailed');
-                }
-            }
-            let toolName = cuectlToolName + getExecutableExtension();
-            cachedToolpath = yield toolCache.cacheDir(extractedCuectlPath, toolName, cuectlToolName, version);
+            finally { if (e_1) throw e_1.error; }
         }
-        const cuectlPath = path.join(cachedToolpath, cuectlToolName + getExecutableExtension());
-        fs.chmodSync(cuectlPath, '777');
-        return cuectlPath;
+        return hash.digest('hex');
+    });
+}
+// install makes the requested version available in the tool cache and
+// returns the path of its cue binary. Nothing is extracted or recorded in
+// the cache until the archive matches its published checksum.
+function install(input_1) {
+    return __awaiter(this, arguments, void 0, function* (input, host = exports.releaseHost) {
+        const url = (p) => new URL(p, host).href;
+        const goos = getGoOS();
+        const goarch = getGoArch();
+        const exe = binaryName(goos);
+        let version = input.trim();
+        if (isLatest(version)) {
+            const latestURL = url('latest.txt');
+            version = parseLatest(yield fetchText(latestURL, 'latest version file'), latestURL);
+            core.info(`Latest version of CUE by CUE Labs: ${version} (from ${latestURL})`);
+        }
+        if (isExactVersion(version)) {
+            const cached = toolCache.find(toolCacheName, version);
+            if (cached) {
+                core.info(`Using CUE ${version} from the tool cache`);
+                return path.join(cached, exe);
+            }
+        }
+        const indexURL = url('index.json');
+        const listed = parseIndex(yield fetchText(indexURL, 'release index'), indexURL);
+        if (!listed.includes(version)) {
+            const exact = listed.filter(isExactVersion).sort(compareVersions);
+            let msg = `${version} is not a version of CUE by CUE Labs listed in ${indexURL}`;
+            const suggestion = suggestVersion(version, listed);
+            if (suggestion) {
+                msg += ` (did you mean ${suggestion}?)`;
+            }
+            msg += '.';
+            if (exact.length > 0) {
+                msg += ` CUE by CUE Labs starts at ${exact[0]};`;
+            }
+            msg += ' earlier open-source releases are installed by cue-lang/setup-cue.';
+            throw new Error(msg);
+        }
+        const name = archiveName(version, goos, goarch);
+        const sumsURL = url(`${version}/cue_${version}_checksums.txt`);
+        const sums = parseChecksums(yield fetchText(sumsURL, 'checksum file'), sumsURL);
+        const want = sums.get(name);
+        if (want === undefined) {
+            throw new Error(`CUE ${version} has no build for ${goos}/${goarch}; it publishes ${publishedPlatforms(sums, version).join(', ')} (from ${sumsURL})`);
+        }
+        const work = fs.mkdtempSync(path.join(process.env['RUNNER_TEMP'] || os.tmpdir(), 'cue-labs-setup-cue-'));
+        try {
+            const archiveURL = url(`${version}/${name}`);
+            // Keep the archive's own name: extraction on Windows may need the .zip extension.
+            const file = yield download(archiveURL, 'archive', path.join(work, name));
+            const got = yield sha256File(file);
+            if (got !== want) {
+                throw new Error(`${name} from ${archiveURL} does not match ${sumsURL}: expected ${want}, got ${got}`);
+            }
+            core.info(`Verified ${name}: sha256 ${got}`);
+            const dir = path.join(work, 'extracted');
+            if (goos === 'windows') {
+                yield toolCache.extractZip(file, dir);
+            }
+            else {
+                yield toolCache.extractTar(file, dir);
+            }
+            if (!fs.existsSync(path.join(dir, exe))) {
+                throw new Error(`${name} has no ${exe} at its root`);
+            }
+            const cached = yield toolCache.cacheDir(dir, toolCacheName, version);
+            const cuePath = path.join(cached, exe);
+            fs.chmodSync(cuePath, 0o755);
+            return cuePath;
+        }
+        finally {
+            fs.rmSync(work, { recursive: true, force: true });
+        }
     });
 }
 function run() {
-    return __awaiter(this, void 0, void 0, function* () {
-        let version = core.getInput('version', { 'required': true });
-        if (version.toLocaleLowerCase() === 'latest') {
-            version = yield getLatestCuectlVersion();
-        }
-        core.debug(util.format("Downloading CUE version %s", version));
-        let cachedCuectlPath = yield downloadCuectl(version);
-        core.addPath(path.dirname(cachedCuectlPath));
-        console.log(`CUE binary version: '${version}' has been cached at ${cachedCuectlPath}`);
-        core.setOutput('cue-path', cachedCuectlPath);
+    return __awaiter(this, arguments, void 0, function* (host = exports.releaseHost) {
+        // An empty version means latest, as the input's default does.
+        const input = core.getInput('version');
+        const cuePath = yield install(input, host);
+        core.addPath(path.dirname(cuePath));
+        core.setOutput('cue-path', cuePath);
+        core.info(`CUE by CUE Labs installed at ${cuePath}`);
     });
 }
 if (require.main === require.cache[eval('__filename')]) {

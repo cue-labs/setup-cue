@@ -13,134 +13,182 @@
 // limitations under the License.
 
 import * as run from '../src/run'
-import * as os from 'os';
-import * as toolCache from '@actions/tool-cache';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as core from '@actions/core';
-import * as util from 'util';
 
-// action.yml declares the outputs available to workflows, so run() must set
-// exactly those names. Read it here, before any test mocks out fs.
-const declaredOutputs = [...fs.readFileSync(path.join(__dirname, '..', 'action.yml'), 'utf8')
-    .match(/^outputs:\n(?:[ ].*\n)*/m)![0]
-    .matchAll(/^  ([\w-]+):$/gm)].map(m => m[1]);
+// action.yml declares the interface workflows rely on. It must stay exactly
+// that of cue-lang/setup-cue, so that switching changes only the uses: line.
+const actionYml = fs.readFileSync(path.join(__dirname, '..', 'action.yml'), 'utf8');
 
-describe('Testing all functions in run file.', () => {
-    test('run() must download specified cuectl version and set output', async () => {
-        jest.spyOn(core, 'getInput').mockReturnValue('v0.4.0');
-        jest.spyOn(toolCache, 'find').mockReturnValue('pathToCachedTool');
-        jest.spyOn(os, 'type').mockReturnValue('Linux');
-        jest.spyOn(fs, 'chmodSync').mockImplementation();
-        jest.spyOn(core, 'addPath').mockImplementation();
-        jest.spyOn(console, 'log').mockImplementation();
-        jest.spyOn(core, 'setOutput').mockImplementation();
+function section(name: string): string {
+    return actionYml.match(new RegExp(`^${name}:\\n(?:[ ].*\\n)*`, 'm'))![0];
+}
 
-        expect(await run.run()).toBeUndefined();
-        expect(core.getInput).toHaveBeenCalledWith('version', { 'required': true });
-        expect(core.addPath).toHaveBeenCalledWith('pathToCachedTool');
-        expect(declaredOutputs).toEqual(['cue-path']);
-        expect(core.setOutput).toHaveBeenCalledWith('cue-path', path.join('pathToCachedTool', 'cue'));
+function keys(block: string): string[] {
+    return [...block.matchAll(/^  ([\w-]+):$/gm)].map(m => m[1]);
+}
+
+describe('action.yml', () => {
+    test('declares one input, version, required and defaulting to latest', () => {
+        const inputs = section('inputs');
+        expect(keys(inputs)).toEqual(['version']);
+        expect(inputs).toMatch(/^    required: true$/m);
+        expect(inputs).toMatch(/^    default: latest$/m);
     });
 
-    test('getExecutableExtension() must return .exe file extension when os equals Windows', () => {
-        jest.spyOn(os, 'type').mockReturnValue('Windows_NT');
-
-        expect(run.getExecutableExtension()).toBe('.exe');
-        expect(os.type).toHaveBeenCalled();
+    test('declares one output, cue-path', () => {
+        expect(keys(section('outputs'))).toEqual(['cue-path']);
     });
 
-    test('getExecutableExtension() must return an empty string for non-windows OS', () => {
-        jest.spyOn(os, 'type').mockReturnValue('Darwin');
+    test('runs on node24', () => {
+        expect(actionYml).toMatch(/^  using: node24$/m);
+    });
+});
 
-        expect(run.getExecutableExtension()).toBe('');
-        expect(os.type).toHaveBeenCalled();
+describe('releaseHost', () => {
+    test('is an https URL ending in a slash', () => {
+        const u = new URL(run.releaseHost);
+        expect(u.protocol).toBe('https:');
+        expect(run.releaseHost.endsWith('/')).toBe(true);
+    });
+
+    test('is the only place the source names the host', () => {
+        const host = new URL(run.releaseHost).host;
+        const srcDir = path.join(__dirname, '..', 'src');
+        const count = fs.readdirSync(srcDir)
+            .map(f => fs.readFileSync(path.join(srcDir, f), 'utf8').split(host).length - 1)
+            .reduce((a, b) => a + b, 0);
+        expect(count).toBe(1);
+    });
+});
+
+describe('platforms', () => {
+    test.each([
+        ['linux', 'linux'],
+        ['darwin', 'darwin'],
+        ['win32', 'windows'],
+        ['freebsd', 'freebsd'],
+    ])('getGoOS(%s) is %s', (platform, goos) => {
+        expect(run.getGoOS(platform as NodeJS.Platform)).toBe(goos);
     });
 
     test.each([
-        ['arm', 'arm'],
+        ['x64', 'amd64'],
         ['arm64', 'arm64'],
-        ['x64', 'amd64']
-    ] as const)("getCuectlArch() must return on %s os architecture %s cuectl architecture", (osArch, cuectlVersion) => {
-        jest.spyOn(os, 'arch').mockReturnValue(osArch);
-
-        expect(run.getCuectlOSArchitecture()).toBe(cuectlVersion);
-        expect(os.arch).toHaveBeenCalled();
+        ['ia32', '386'],
+        ['arm', 'arm'],
+        ['s390x', 's390x'],
+    ])('getGoArch(%s) is %s', (arch, goarch) => {
+        expect(run.getGoArch(arch)).toBe(goarch);
     });
 
     test.each([
-        ['arm64'],
-        ['amd64']
-    ])('getCuectlDownloadURL() must return the URL to download %s cuectl for Linux based systems', (arch) => {
-        jest.spyOn(os, 'type').mockReturnValue('Linux');
-        const cuectlLinuxUrl = util.format('https://github.com/cue-lang/cue/releases/download/v0.4.0/cue_v0.4.0_linux_%s.tar.gz', arch);
+        ['linux', 'amd64', 'cue_v0.18.0_linux_amd64.tar.gz'],
+        ['darwin', 'arm64', 'cue_v0.18.0_darwin_arm64.tar.gz'],
+        ['windows', 'amd64', 'cue_v0.18.0_windows_amd64.zip'],
+        ['windows', 'arm64', 'cue_v0.18.0_windows_arm64.zip'],
+    ])('archiveName for %s/%s is %s', (goos, goarch, name) => {
+        expect(run.archiveName('v0.18.0', goos, goarch)).toBe(name);
+    });
 
-        expect(run.getCuectlDownloadURL('v0.4.0', arch)).toBe(cuectlLinuxUrl);
-        expect(os.type).toHaveBeenCalled();
+    test('binaryName', () => {
+        expect(run.binaryName('windows')).toBe('cue.exe');
+        expect(run.binaryName('linux')).toBe('cue');
+        expect(run.binaryName('darwin')).toBe('cue');
+    });
+
+    test('publishedPlatforms lists the archives in a checksum file', () => {
+        const sums = new Map([
+            ['cue_v0.18.0_windows_amd64.zip', 'a'],
+            ['cue_v0.18.0_linux_amd64.tar.gz', 'b'],
+            ['cue_v0.18.0_darwin_all.pkg', 'c'],
+            ['cue_v0.18.0_windows_amd64.msi', 'd'],
+            ['cue_v0.18.0_darwin_arm64.tar.gz', 'e'],
+        ]);
+        expect(run.publishedPlatforms(sums, 'v0.18.0')).toEqual(['darwin/arm64', 'linux/amd64', 'windows/amd64']);
+    });
+});
+
+describe('version input', () => {
+    test.each(['', '  ', 'latest', 'Latest', 'LATEST '])('isLatest(%j)', (input) => {
+        expect(run.isLatest(input)).toBe(true);
+    });
+
+    test.each(['v0.18.0', 'v0.18.0-rc.1', 'lates'])('not isLatest(%j)', (input) => {
+        expect(run.isLatest(input)).toBe(false);
+    });
+
+    test.each(['v0.18.0', 'v0.19.0-rc.1', 'v1.2.3-alpha.1.x-y', 'v10.20.30'])('isExactVersion(%j)', (v) => {
+        expect(run.isExactVersion(v)).toBe(true);
+    });
+
+    test.each(['0.18.0', 'V0.18.0', 'v0.18', 'v01.2.3', '>=v0.18.0', 'v0.18.0+build', 'latest', ''])('not isExactVersion(%j)', (v) => {
+        expect(run.isExactVersion(v)).toBe(false);
+    });
+
+    test('compareVersions orders by semantic version precedence', () => {
+        const sorted = ['v0.19.0-rc.1', 'v0.18.1', 'v0.18.0', 'v0.18.0-rc.1', 'v0.18.0-alpha.2', 'v0.18.0-alpha.10', 'v0.9.0']
+            .sort(run.compareVersions);
+        expect(sorted).toEqual(['v0.9.0', 'v0.18.0-alpha.2', 'v0.18.0-alpha.10', 'v0.18.0-rc.1', 'v0.18.0', 'v0.18.1', 'v0.19.0-rc.1']);
     });
 
     test.each([
-        ['arm64'],
-        ['amd64']
-    ])('getCuectlDownloadURL() must return the URL to download %s cuectl for MacOS based systems', (arch) => {
-        jest.spyOn(os, 'type').mockReturnValue('Darwin');
-        const cuectlDarwinUrl = util.format('https://github.com/cue-lang/cue/releases/download/v0.4.0/cue_v0.4.0_darwin_%s.tar.gz', arch);
+        ['0.18.0', 'v0.18.0'],
+        ['V0.18.0', 'v0.18.0'],
+        ['V0.19.0-RC.1', 'v0.19.0-rc.1'],
+        ['v9.9.9', undefined],
+        ['0.17.1', undefined],
+    ])('suggestVersion(%j) is %j', (input, want) => {
+        expect(run.suggestVersion(input, ['v0.18.0', 'v0.18.1', 'v0.19.0-rc.1'])).toBe(want);
+    });
+});
 
-        expect(run.getCuectlDownloadURL('v0.4.0', arch)).toBe(cuectlDarwinUrl);
-        expect(os.type).toHaveBeenCalled();
+describe('parsing', () => {
+    const url = 'https://example.com/x';
+
+    test.each([
+        ['v0.18.0\n', 'v0.18.0'],
+        ['v0.18.0', 'v0.18.0'],
+        [' v0.18.0 \r\nmore\n', 'v0.18.0'],
+    ])('parseLatest(%j)', (text, want) => {
+        expect(run.parseLatest(text, url)).toBe(want);
+    });
+
+    test.each(['', '\n', '  \n'])('parseLatest(%j) fails naming the URL', (text) => {
+        expect(() => run.parseLatest(text, url)).toThrow(url);
+    });
+
+    test('parseIndex reads versions and ignores other fields', () => {
+        const text = JSON.stringify({
+            versions: [
+                { version: 'v0.18.0', prerelease: false, added: 1 },
+                { version: 'v0.19.0-rc.1', prerelease: true },
+            ],
+            other: true,
+        });
+        expect(run.parseIndex(text, url)).toEqual(['v0.18.0', 'v0.19.0-rc.1']);
+    });
+
+    test.each(['not json', '{}', '{"versions": {}}', '{"versions": [{"prerelease": true}]}'])('parseIndex(%j) fails naming the URL', (text) => {
+        expect(() => run.parseIndex(text, url)).toThrow(url);
+    });
+
+    test('parseChecksums reads sha256sum output', () => {
+        const a = 'a'.repeat(64);
+        const b = 'B'.repeat(64);
+        const sums = run.parseChecksums(`${a}  cue_v0.18.0_linux_amd64.tar.gz\n\n${b} *cue_v0.18.0_windows_amd64.zip\n`, url);
+        expect([...sums.entries()]).toEqual([
+            ['cue_v0.18.0_linux_amd64.tar.gz', a],
+            ['cue_v0.18.0_windows_amd64.zip', 'b'.repeat(64)],
+        ]);
     });
 
     test.each([
-        ['amd64']
-    ])('getCuectlDownloadURL() must return the URL to download %s cuectl for Windows based systems', (arch) => {
-        jest.spyOn(os, 'type').mockReturnValue('Windows_NT');
-        const cuectlWindowsUrl = util.format('https://github.com/cue-lang/cue/releases/download/v0.4.0/cue_v0.4.0_windows_%s.zip', arch);
-
-        expect(run.getCuectlDownloadURL('v0.4.0', arch)).toBe(cuectlWindowsUrl);
-        expect(os.type).toHaveBeenCalled();
+        'garbage',
+        'abc  cue_v0.18.0_linux_amd64.tar.gz',
+        `${'a'.repeat(64)}cue_v0.18.0_linux_amd64.tar.gz`,
+    ])('parseChecksums fails on %j, naming the line and URL', (line) => {
+        expect(() => run.parseChecksums(`${line}\n`, url)).toThrow(url);
+        expect(() => run.parseChecksums(`${line}\n`, url)).toThrow(line);
     });
-
-    test('downloadCuectl() must download cuectl tarball, add it to github actions tool cache and return the path to extracted dir', async () => {
-        jest.spyOn(toolCache, 'find').mockReturnValue('');
-        jest.spyOn(toolCache, 'downloadTool').mockReturnValue(Promise.resolve('cuectlDownloadPath'));
-        jest.spyOn(toolCache, 'extractTar').mockReturnValue(Promise.resolve('cuectlExtractedFolder'));
-
-        jest.spyOn(toolCache, 'cacheDir').mockReturnValue(Promise.resolve('pathToCachedTool'));
-        jest.spyOn(os, 'type').mockReturnValue('Linux');
-        jest.spyOn(fs, 'chmodSync').mockImplementation(() => {});
-
-        expect(await run.downloadCuectl('v0.4.0')).toBe(path.join('pathToCachedTool', 'cue'));
-        expect(toolCache.find).toHaveBeenCalledWith('cue', 'v0.4.0');
-        expect(toolCache.downloadTool).toHaveBeenCalled();
-        expect(toolCache.cacheDir).toHaveBeenCalled();
-        expect(os.type).toHaveBeenCalled();
-        expect(fs.chmodSync).toHaveBeenCalledWith(path.join('pathToCachedTool', 'cue'), '777');
-    });
-
-    test('downloadCuectl() must download cuectl zip archive, add it to github actions tool cache and return the path to extracted dir', async () => {
-        jest.spyOn(toolCache, 'find').mockReturnValue('');
-        jest.spyOn(toolCache, 'downloadTool').mockReturnValue(Promise.resolve('cuectlDownloadPath'));
-        jest.spyOn(toolCache, 'extractZip').mockReturnValue(Promise.resolve('cuectlExtractedFolder'));
-
-        jest.spyOn(toolCache, 'cacheDir').mockReturnValue(Promise.resolve('pathToCachedTool'));
-        jest.spyOn(os, 'type').mockReturnValue('Windows_NT');
-        jest.spyOn(fs, 'chmodSync').mockImplementation(() => {});
-
-        expect(await run.downloadCuectl('v0.4.0')).toBe(path.join('pathToCachedTool', 'cue.exe'));
-        expect(toolCache.find).toHaveBeenCalledWith('cue', 'v0.4.0');
-        expect(toolCache.downloadTool).toHaveBeenCalled();
-        expect(toolCache.cacheDir).toHaveBeenCalled();
-        expect(os.type).toHaveBeenCalled();
-        expect(fs.chmodSync).toHaveBeenCalledWith(path.join('pathToCachedTool', 'cue.exe'), '777');
-    });
-
-    test('getLatestCuectlVersion() must download latest version file, read version and return it', async () => {
-        jest.spyOn(toolCache, 'downloadTool').mockResolvedValue('pathToTool');
-        const response = '{"Version":"v0.5.0","Time":"2023-04-12T11:01:31Z","Origin":{"VCS":"git","URL":"https://review.gerrithub.io/cue-lang/cue","Ref":"refs/tags/v0.5.0","Hash":"d780488159bd082f9f9d027ab42dd4d9b5d95d5e"}}';
-        jest.spyOn(fs, 'readFileSync').mockReturnValue(response);
-
-        expect(await run.getLatestCuectlVersion()).toBe('v0.5.0');
-        expect(toolCache.downloadTool).toHaveBeenCalled();
-        expect(fs.readFileSync).toHaveBeenCalledWith('pathToTool', 'utf8');
-    });
-})
+});
