@@ -18,7 +18,8 @@ import * as path from 'path';
 
 // action.yml declares the interface workflows rely on. It must stay exactly
 // that of cue-lang/setup-cue, so that switching changes only the uses: line.
-const actionYml = fs.readFileSync(path.join(__dirname, '..', 'action.yml'), 'utf8');
+// Git may check it out with CRLF line endings, as it does on Windows runners.
+const actionYml = fs.readFileSync(path.join(__dirname, '..', 'action.yml'), 'utf8').replace(/\r\n/g, '\n');
 
 function section(name: string): string {
     return actionYml.match(new RegExp(`^${name}:\\n(?:[ ].*\\n)*`, 'm'))![0];
