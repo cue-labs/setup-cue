@@ -29,7 +29,7 @@ import * as core from '@actions/core';
 //	<version>/cue_<version>_<os>_<arch>.tar.gz  (.zip for windows)
 //
 // It is the only place the host is named.
-export const releaseHost = 'https://storage.googleapis.com/cue-releases/';
+export const releaseHost = 'https://dl.cue.dev/';
 
 // toolCacheName is the name under which installations are recorded in the
 // runner's tool cache. It differs from the name cue-lang/setup-cue uses, so
