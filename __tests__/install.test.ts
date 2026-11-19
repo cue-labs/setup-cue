@@ -193,7 +193,8 @@ describe('failing clearly (User Story 3)', () => {
         const err = run.run(host.url);
         await expect(err).rejects.toThrow('v0.17.1 is not a version of CUE by CUE Labs');
         await expect(err).rejects.toThrow(host.url + 'index.json');
-        await expect(err).rejects.toThrow('starts at v0.18.0');
+        // v0.18.0-rc.3 is listed, but v0.18.0 is the first stable release.
+        await expect(err).rejects.toThrow('starts at v0.18.0-rc.3;');
         await expect(err).rejects.toThrow('cue-lang/setup-cue');
         await expect(err).rejects.not.toThrow('did you mean');
         expectNothingInstalled(env);

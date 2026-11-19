@@ -26,7 +26,9 @@ import { AddressInfo } from 'net';
 
 import { archiveName, binaryName, getGoArch, getGoOS } from '../src/run';
 
-export const versions = ['v0.18.0', 'v0.18.1', 'v0.19.0-rc.1'];
+// The first listed version is a pre-release of the first stable one, as the
+// release downloads list the release candidates published before v0.18.0.
+export const versions = ['v0.18.0-rc.3', 'v0.18.0', 'v0.18.1', 'v0.19.0-rc.1'];
 export const latest = 'v0.18.1';
 
 export const platforms: [string, string][] = [
@@ -70,8 +72,10 @@ export function sha256(data: Buffer | string): string {
 }
 
 // buildFixture lays out every version in a fresh directory and returns its
-// path. Only the archive for the runner's own platform is a real archive; the
-// others are never downloaded, so they hold placeholder bytes.
+// path. Each version directory holds what a release's does: an archive per
+// platform, the installers, source.json, and the checksum file listing them
+// all. Only the archive for the runner's own platform is a real archive; the
+// other files are never downloaded, so they hold placeholder bytes.
 export function buildFixture(): string {
     const root = tempDir('releases-');
     const goos = getGoOS();
@@ -88,11 +92,14 @@ export function buildFixture(): string {
             if (o === goos && a === goarch) {
                 makeArchive(path.join(dir, name), {
                     [binaryName(o)]: binaryContents(v, o, a),
-                    LICENSE: 'placeholder license\n',
+                    'NOTICES.txt': 'placeholder notices\n',
                 });
             } else {
                 fs.writeFileSync(path.join(dir, name), `placeholder ${name}\n`);
             }
+        }
+        for (const name of [`cue_${v}_darwin_all.pkg`, `cue_${v}_windows_amd64.msi`, `cue_${v}_windows_arm64.msi`, 'source.json']) {
+            fs.writeFileSync(path.join(dir, name), `placeholder ${name}\n`);
         }
         writeChecksums(dir, v);
     }
