@@ -113,6 +113,13 @@ export function suggestVersion(input: string, listed: string[]): string | undefi
     return listed.find(v => v.toLowerCase() === want);
 }
 
+// firstRelease returns the lowest stable version listed, or the lowest
+// pre-release if no stable version is listed yet.
+export function firstRelease(listed: string[]): string | undefined {
+    const exact = listed.filter(isExactVersion).sort(compareVersions);
+    return exact.find(v => !v.includes('-')) ?? exact[0];
+}
+
 export function parseLatest(text: string, url: string): string {
     const v = text.split('\n')[0].trim();
     if (v === '') {
@@ -218,15 +225,15 @@ export async function install(input: string, host: string = releaseHost): Promis
     const indexURL = url('index.json');
     const listed = parseIndex(await fetchText(indexURL, 'release index'), indexURL);
     if (!listed.includes(version)) {
-        const exact = listed.filter(isExactVersion).sort(compareVersions);
         let msg = `${version} is not a version of CUE by CUE Labs listed in ${indexURL}`;
         const suggestion = suggestVersion(version, listed);
         if (suggestion) {
             msg += ` (did you mean ${suggestion}?)`;
         }
         msg += '.';
-        if (exact.length > 0) {
-            msg += ` CUE by CUE Labs starts at ${exact[0]};`;
+        const first = firstRelease(listed);
+        if (first) {
+            msg += ` CUE by CUE Labs starts at ${first};`;
         }
         msg += ' earlier open-source releases are installed by cue-lang/setup-cue.';
         throw new Error(msg);

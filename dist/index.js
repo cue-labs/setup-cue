@@ -34039,6 +34039,7 @@ exports.isLatest = isLatest;
 exports.isExactVersion = isExactVersion;
 exports.compareVersions = compareVersions;
 exports.suggestVersion = suggestVersion;
+exports.firstRelease = firstRelease;
 exports.parseLatest = parseLatest;
 exports.parseIndex = parseIndex;
 exports.parseChecksums = parseChecksums;
@@ -34134,6 +34135,13 @@ function compareVersions(a, b) {
 function suggestVersion(input, listed) {
     const want = (input.startsWith('v') || input.startsWith('V') ? input : 'v' + input).toLowerCase();
     return listed.find(v => v.toLowerCase() === want);
+}
+// firstRelease returns the lowest stable version listed, or the lowest
+// pre-release if no stable version is listed yet.
+function firstRelease(listed) {
+    var _a;
+    const exact = listed.filter(isExactVersion).sort(compareVersions);
+    return (_a = exact.find(v => !v.includes('-'))) !== null && _a !== void 0 ? _a : exact[0];
 }
 function parseLatest(text, url) {
     const v = text.split('\n')[0].trim();
@@ -34253,15 +34261,15 @@ function install(input_1) {
         const indexURL = url('index.json');
         const listed = parseIndex(yield fetchText(indexURL, 'release index'), indexURL);
         if (!listed.includes(version)) {
-            const exact = listed.filter(isExactVersion).sort(compareVersions);
             let msg = `${version} is not a version of CUE by CUE Labs listed in ${indexURL}`;
             const suggestion = suggestVersion(version, listed);
             if (suggestion) {
                 msg += ` (did you mean ${suggestion}?)`;
             }
             msg += '.';
-            if (exact.length > 0) {
-                msg += ` CUE by CUE Labs starts at ${exact[0]};`;
+            const first = firstRelease(listed);
+            if (first) {
+                msg += ` CUE by CUE Labs starts at ${first};`;
             }
             msg += ' earlier open-source releases are installed by cue-lang/setup-cue.';
             throw new Error(msg);

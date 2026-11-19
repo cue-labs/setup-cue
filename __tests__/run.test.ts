@@ -142,6 +142,15 @@ describe('version input', () => {
     ])('suggestVersion(%j) is %j', (input, want) => {
         expect(run.suggestVersion(input, ['v0.18.0', 'v0.18.1', 'v0.19.0-rc.1'])).toBe(want);
     });
+
+    test.each([
+        [['v0.18.1', 'v0.18.0-rc.3', 'v0.18.0', 'v0.19.0-rc.1'], 'v0.18.0'],
+        [['v0.18.0-rc.4', 'v0.18.0-rc.3'], 'v0.18.0-rc.3'],
+        [['not-a-version'], undefined],
+        [[], undefined],
+    ])('firstRelease(%j) is %j', (listed, want) => {
+        expect(run.firstRelease(listed)).toBe(want);
+    });
 });
 
 describe('parsing', () => {
