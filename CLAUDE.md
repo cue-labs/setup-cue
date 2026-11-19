@@ -81,9 +81,11 @@ exact tags.
 ## Releasing
 
 1. Check CI is green on `main`.
-2. Run the "smoke test" workflow on `main`, once with `version` left as
-   `latest` and once with an exact released version, and check it passes on
-   all three operating systems. It installs from the real release host.
+2. Run the "smoke test" workflow on `main` with an exact version listed in
+   `index.json`, and again with `version` left as `latest`, and check both
+   pass on all three operating systems. They install from the real release
+   host. `latest.txt` exists only once a stable release is listed; until
+   then, a listed pre-release is the only check possible.
 3. Update the README's `uses:` line and `package.json`'s version.
 4. Tag the release and move the major tag:
 
