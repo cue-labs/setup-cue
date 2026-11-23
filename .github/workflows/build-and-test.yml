@@ -40,9 +40,9 @@ jobs:
         with:
           node-version: 24
       - name: Use CUE
-        uses: cue-lang/setup-cue@v2
+        uses: ./
         with:
-          version: v0.17.1
+          version: v0.18.0
       - name: Build
         run: |
           npm ci

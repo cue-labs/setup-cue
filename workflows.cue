@@ -67,12 +67,11 @@ buildAndTest: githubactions.#Workflow & {
 				_checkout,
 				_setupNode,
 				{
-					// The generators below only need some cue. Until the release host
-					// serves a release this action can install, take it from the
-					// open-source action.
+					// The generators below only need some cue; install it with
+					// this action as checked out.
 					name: "Use CUE"
-					uses: "cue-lang/setup-cue@v2"
-					with: version: "v0.17.1"
+					uses: "./"
+					with: version: "v0.18.0"
 				},
 				{
 					name: "Build"
